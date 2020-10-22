@@ -2,12 +2,13 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.UUID;
+import java.util.*;
 
 public class MessageReceiver extends Thread {
+    private final int WAIT_TIME = 5_000;
     private final Node node;
     private final byte[] buf = new byte[1024];
 
@@ -47,13 +48,58 @@ public class MessageReceiver extends Thread {
         }
     }
 
+    void resendMessages() {
+        synchronized (node.messages) {
+            node.sentMessages.forEach((k, v) -> {
+                synchronized (node.messages) {
+                    for (UUID msgId : v) {
+                        node.makeMessage(msgId, node.messages.get(msgId));
+                        try {
+                            node.socket.send(new DatagramPacket(node.buf, node.buf.length, k.getAddress(), k.getPort()));
+                        } catch (IOException e) {
+                            System.out.println(e.getMessage());
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    void checkMessages() {
+        synchronized (node.messages) {
+            Iterator<Map.Entry<UUID, String>> messagesIter = node.messages.entrySet().iterator();
+            Iterator<Map.Entry<InetSocketAddress, ArrayList<UUID>>> sentMsgIter = node.sentMessages.entrySet().iterator();
+            while (messagesIter.hasNext()) {
+                int counter = 0;
+                Map.Entry<UUID, String> msgEntry = messagesIter.next();
+                while (sentMsgIter.hasNext()) {
+                    Map.Entry<InetSocketAddress, ArrayList<UUID>> sentMsgEntry = sentMsgIter.next();
+                    if (sentMsgEntry.getValue().contains(msgEntry.getKey())) {
+                        counter++;
+                    }
+                }
+                if (counter == 0) {
+                    messagesIter.remove();
+                }
+            }
+        }
+    }
 
     @Override
     public void run() {
+        Random random = new Random();
+        int ackCounter = 0;
         while (!isInterrupted()) {
+            resendMessages();
             DatagramPacket packet = new DatagramPacket(buf, buf.length);
             try {
+                node.socket.setSoTimeout(WAIT_TIME);
                 node.socket.receive(packet);
+                if (random.nextInt(100) < node.loss) {
+                    continue;
+                }
+            } catch (SocketTimeoutException e) {
+                continue;
             } catch (IOException e) {
                 System.out.println(e.getMessage());
                 return;
@@ -70,9 +116,11 @@ public class MessageReceiver extends Thread {
             } else if (packet.getLength() == UUIDbytes.length) {
                 node.sentMessages.get(packet.getSocketAddress())
                         .remove(UUID.fromString(new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8)));
+                if (++ackCounter >= node.neighbors.size()) {
+                    checkMessages();
+                    ackCounter = 0;
+                }
             }
-
-
         }
     }
 }

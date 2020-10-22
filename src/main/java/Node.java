@@ -12,7 +12,8 @@ public class Node {
     int loss;
     DatagramSocket socket;
     final List<InetSocketAddress> neighbors;
-    Map<InetSocketAddress, ArrayList<UUID>> sentMessages;
+    final Map<InetSocketAddress, ArrayList<UUID>> sentMessages;
+    final Map<UUID, String> messages;
     List<UUID> rcvdMessages;
     byte[] buf;
 
@@ -24,13 +25,23 @@ public class Node {
         } catch (SocketException e) {
             System.out.println(e.getMessage());
         }
-        neighbors = new ArrayList<>();
-        sentMessages = new HashMap<>();
+        neighbors = Collections.synchronizedList(new ArrayList<>());
+        sentMessages = Collections.synchronizedMap(new HashMap<>());
         rcvdMessages = new ArrayList<>();
+        messages = Collections.synchronizedMap(new HashMap<>());
     }
 
     public void connect(String ip, int port) throws IllegalArgumentException {
         neighbors.add(new InetSocketAddress(ip, port));
+    }
+
+    void makeMessage(UUID messageId, String message) {
+        buf = ByteBuffer.allocate(messageId.toString().getBytes(StandardCharsets.UTF_8).length + Integer.BYTES +
+                name.getBytes(StandardCharsets.UTF_8).length + message.getBytes(StandardCharsets.UTF_8).length)
+                .put(messageId.toString().getBytes(StandardCharsets.UTF_8))
+                .putInt(name.length())
+                .put(name.getBytes(StandardCharsets.UTF_8))
+                .put(message.getBytes(StandardCharsets.UTF_8)).array();
     }
 
     public void start() {
@@ -53,22 +64,21 @@ public class Node {
 
             UUID messageId = UUID.randomUUID();
 
-            buf = ByteBuffer.allocate(messageId.toString().getBytes(StandardCharsets.UTF_8).length + Integer.BYTES +
-                    name.getBytes(StandardCharsets.UTF_8).length + message.getBytes(StandardCharsets.UTF_8).length)
-                    .put(messageId.toString().getBytes(StandardCharsets.UTF_8))
-                    .putInt(name.length())
-                    .put(name.getBytes(StandardCharsets.UTF_8))
-                    .put(message.getBytes(StandardCharsets.UTF_8)).array();
+            synchronized (messages) {
+                messages.put(messageId, message);
 
-            for (InetSocketAddress neighbor : neighbors) {
-                try {
-                    socket.send(new DatagramPacket(buf, buf.length, neighbor.getAddress(), neighbor.getPort()));
-                    sentMessages.putIfAbsent(neighbor, new ArrayList<>());
-                    if (!sentMessages.get(neighbor).contains(messageId)) {
-                        sentMessages.get(neighbor).add(messageId);
+                makeMessage(messageId, message);
+
+                for (InetSocketAddress neighbor : neighbors) {
+                    try {
+                        socket.send(new DatagramPacket(buf, buf.length, neighbor.getAddress(), neighbor.getPort()));
+                        sentMessages.putIfAbsent(neighbor, new ArrayList<>());
+                        if (!sentMessages.get(neighbor).contains(messageId)) {
+                            sentMessages.get(neighbor).add(messageId);
+                        }
+                    } catch (IOException e) {
+                        System.out.println(e.getMessage());
                     }
-                } catch (IOException e) {
-                    System.out.println(e.getMessage());
                 }
             }
         }
