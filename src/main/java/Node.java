@@ -1,4 +1,3 @@
-import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
@@ -8,22 +7,21 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class Node {
-    String name;
-    int loss;
-    DatagramSocket socket;
-    final List<InetSocketAddress> neighbors;
-    final Map<InetSocketAddress, ArrayList<UUID>> sentMessages;
-    final Map<UUID, String> messages;
-    List<UUID> rcvdMessages;
-    byte[] buf;
+    private final String name;
+    private final DatagramSocket socket;
+    private final List<InetSocketAddress> neighbors;
+    private final Map<InetSocketAddress, List<UUID>> sentMessages;
+    private final Map<UUID, String> messages;
+    private final List<UUID> rcvdMessages;
+    private int ackCounter = 0;
 
-    public Node(String name, int loss, int port) {
+    public Node(String name, int port) throws SocketException {
         this.name = name;
-        this.loss = loss;
         try {
             this.socket = new DatagramSocket(port);
         } catch (SocketException e) {
             System.out.println(e.getMessage());
+            throw e;
         }
         neighbors = Collections.synchronizedList(new ArrayList<>());
         sentMessages = Collections.synchronizedMap(new HashMap<>());
@@ -31,61 +29,130 @@ public class Node {
         messages = Collections.synchronizedMap(new HashMap<>());
     }
 
+    public Map<InetSocketAddress, List<UUID>> getSentMessages() {
+        Map<InetSocketAddress, List<UUID>> sentMessages;
+        synchronized (this.sentMessages) {
+            sentMessages = this.sentMessages;
+        }
+        return sentMessages;
+    }
+
+    public List<InetSocketAddress> getNeighbors() {
+        return neighbors;
+    }
+
+    public DatagramSocket getSocket() {
+        return socket;
+    }
+
+    public String getMessage(UUID messageId) {
+        String message;
+        synchronized (messages) {
+            System.out.println(messageId.toString());
+            message = messages.get(messageId);
+        }
+        return message;
+    }
+
+    public List<UUID> copyMessageIds(InetSocketAddress neighbor) {
+        List<UUID> copy;
+        synchronized (sentMessages) {
+            copy = Collections.synchronizedList(new ArrayList<>(sentMessages.get(neighbor)));
+        }
+        return copy;
+    }
+
+
     public void connect(String ip, int port) throws IllegalArgumentException {
         neighbors.add(new InetSocketAddress(ip, port));
     }
 
-    void makeMessage(UUID messageId, String message) {
-        buf = ByteBuffer.allocate(messageId.toString().getBytes(StandardCharsets.UTF_8).length + Integer.BYTES +
+    public byte[] wrapMessage(UUID messageId, String message) {
+        byte[] buf = ByteBuffer.allocate(messageId.toString().getBytes(StandardCharsets.UTF_8).length + Integer.BYTES +
                 name.getBytes(StandardCharsets.UTF_8).length + message.getBytes(StandardCharsets.UTF_8).length)
                 .put(messageId.toString().getBytes(StandardCharsets.UTF_8))
                 .putInt(name.length())
                 .put(name.getBytes(StandardCharsets.UTF_8))
                 .put(message.getBytes(StandardCharsets.UTF_8)).array();
+
+        return buf;
     }
 
-    public void start() {
-        MessageReceiver receiver = new MessageReceiver(this);
-        Scanner scanner = new Scanner(System.in);
-        receiver.start();
-        System.out.println("Connected");
-        while (true) {
-            String message;
+    public UUID unwrapMessage(DatagramPacket packet, byte[] buf) {
+        byte[] UUIDbytes = UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8);
+        UUID messageId = UUID.fromString(new String(buf, 0, UUIDbytes.length, StandardCharsets.UTF_8));
+        int nameLength = ByteBuffer.wrap(Arrays.copyOfRange(buf, UUIDbytes.length,
+                UUIDbytes.length + Integer.BYTES)).getInt();
+        String name = new String(buf, UUIDbytes.length + Integer.BYTES, nameLength, StandardCharsets.UTF_8);
+        String message = new String(buf, UUIDbytes.length + Integer.BYTES + nameLength,
+                packet.getLength() - (UUIDbytes.length + Integer.BYTES + nameLength), StandardCharsets.UTF_8);
 
-            do {
-                message = scanner.nextLine();
-            } while (message.isEmpty() | message.isBlank());
+        if (!rcvdMessages.contains(messageId)) {
+            rcvdMessages.add(messageId);
+            System.out.println("From " + name + ": " + message);
+        }
 
-            if ("/exit".equals(message)) {
-                break;
-            }
+        return messageId;
+    }
 
-            System.out.println("You: " + message);
-
-            UUID messageId = UUID.randomUUID();
-
-            synchronized (messages) {
-                messages.put(messageId, message);
-
-                makeMessage(messageId, message);
-
-                for (InetSocketAddress neighbor : neighbors) {
-                    try {
-                        socket.send(new DatagramPacket(buf, buf.length, neighbor.getAddress(), neighbor.getPort()));
-                        sentMessages.putIfAbsent(neighbor, new ArrayList<>());
-                        if (!sentMessages.get(neighbor).contains(messageId)) {
-                            sentMessages.get(neighbor).add(messageId);
-                        }
-                    } catch (IOException e) {
-                        System.out.println(e.getMessage());
-                    }
+    public void putSentMessage(InetSocketAddress neighbor, UUID messageId) {
+        synchronized (sentMessages) {
+            sentMessages.putIfAbsent(neighbor, Collections.synchronizedList(new ArrayList<>()));
+            synchronized (sentMessages.get(neighbor)) {
+                if (!sentMessages.get(neighbor).contains(messageId)) {
+                    sentMessages.get(neighbor).add(messageId);
                 }
             }
         }
-
-        receiver.interrupt();
-        socket.close();
     }
 
+    public void putMessage(UUID messageId, String message) {
+        synchronized (messages) {
+            messages.put(messageId, message);
+        }
+    }
 
+    public void addNeighbor(InetSocketAddress neighbor) {
+        synchronized (neighbors) {
+            if (!neighbors.contains(neighbor)) {
+                neighbors.add(neighbor);
+            }
+        }
+    }
+
+    void checkMessages() {
+        synchronized (messages) {
+            Iterator<Map.Entry<UUID, String>> messagesIter = messages.entrySet().iterator();
+            Iterator<Map.Entry<InetSocketAddress, List<UUID>>> sentMsgIter = sentMessages.entrySet().iterator();
+            while (messagesIter.hasNext()) {
+                int counter = 0;
+                Map.Entry<UUID, String> msgEntry = messagesIter.next();
+                while (sentMsgIter.hasNext()) {
+                    Map.Entry<InetSocketAddress, List<UUID>> sentMsgEntry = sentMsgIter.next();
+                    if (sentMsgEntry.getValue().contains(msgEntry.getKey())) {
+                        System.out.println("cnt " + msgEntry.getValue());
+                        counter++;
+                    }
+                }
+                if (counter == 0) {
+                    System.out.println("rmv " + msgEntry.getValue() + "  " + sentMessages.size());
+                    messagesIter.remove();
+                }
+            }
+        }
+    }
+
+    public void ackMessage(InetSocketAddress neighbor, DatagramPacket packet) {
+        synchronized (neighbors) {
+            synchronized (sentMessages) {
+                sentMessages.get(neighbor)
+                        .remove(UUID.fromString(new String(packet.getData(), 0, packet.getLength(),
+                                StandardCharsets.UTF_8)));
+                if (++ackCounter >= neighbors.size()) {
+                    checkMessages();
+                    ackCounter = 0;
+                }
+            }
+        }
+    }
 }

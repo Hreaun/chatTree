@@ -1,3 +1,4 @@
+import java.net.SocketException;
 
 public class Main {
     public static void main(String[] args) {
@@ -7,10 +8,17 @@ public class Main {
         }
 
         Node node;
+        Sender sender;
+        Receiver receiver;
         try {
-            node = new Node(args[0], Integer.parseInt(args[1]), Integer.parseInt(args[2]));
+            node = new Node(args[0], Integer.parseInt(args[2]));
+            receiver = new Receiver(node, Integer.parseInt(args[1]));
+            sender = new Sender(node);
         } catch (NumberFormatException e) {
             System.out.println("Enter name, loss percentage and port for the node.");
+            return;
+
+        } catch (SocketException e) {
             return;
         }
 
@@ -25,6 +33,16 @@ public class Main {
             }
         }
 
-        node.start();
+
+        receiver.start();
+        sender.start();
+
+        receiver.interrupt();
+        try {
+            receiver.join();
+        } catch (InterruptedException e) {
+            System.out.println(e.getMessage());
+        }
+
     }
 }
