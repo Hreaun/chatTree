@@ -18,7 +18,7 @@ public class Sender {
 
     public void start() {
         Scanner scanner = new Scanner(System.in);
-        System.out.println("Connected. Type '/exit' to exit");
+        System.out.println("You connected as " + node.getName() + ". Type '/exit' to exit.");
         while (true) {
             String message;
             do {

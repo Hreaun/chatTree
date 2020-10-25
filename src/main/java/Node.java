@@ -31,6 +31,10 @@ public class Node {
         messages = new ConcurrentHashMap<>();
     }
 
+    public String getName() {
+        return name;
+    }
+
     public Map<InetSocketAddress, List<UUID>> getSentMessages() {
         Map<InetSocketAddress, List<UUID>> sentMessages;
         synchronized (this.sentMessages) {
@@ -51,15 +55,6 @@ public class Node {
         return messages;
     }
 
-    public String getMessage(UUID messageId) {
-        String message;
-        synchronized (messages) {
-            System.out.println(messageId.toString());
-            message = messages.get(messageId);
-        }
-        return message;
-    }
-
     public List<UUID> copyMessageIds(InetSocketAddress neighbor) {
         List<UUID> copy;
         synchronized (sentMessages) {
@@ -67,7 +62,6 @@ public class Node {
         }
         return copy;
     }
-
 
     public void connect(String ip, int port) throws IllegalArgumentException {
         neighbors.add(new InetSocketAddress(ip, port));

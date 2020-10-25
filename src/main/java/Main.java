@@ -33,7 +33,6 @@ public class Main {
             }
         }
 
-
         receiver.start();
         sender.start();
 
