@@ -215,13 +215,15 @@ public class Node {
 
     // подтверждение получения сообщения соседом
     public void ackMessage(InetSocketAddress neighbor, DatagramPacket packet) {
-        synchronized (neighbors) {
-            synchronized (sentMessages) {
+        synchronized (sentMessages) {
+            synchronized (sentMessages.get(neighbor)) {
                 if (sentMessages.get(neighbor)
                         .remove(UUID.fromString(new String(packet.getData(), Byte.BYTES,
                                 packet.getLength() - Byte.BYTES, StandardCharsets.UTF_8)))) {
                     ackCounter++;
                 }
+            }
+            synchronized (neighbors) {
                 if (ackCounter >= neighbors.size()) {
                     checkMessages();
                     ackCounter = 0;

@@ -84,7 +84,7 @@ public class Receiver extends Thread {
                 // прием заместителя
                 if (buf[0] == MessageType.SUB.getValue()) {
                     node.updateNeighbors((InetSocketAddress) packet.getSocketAddress(), packet, buf);
-                    System.out.println("Neighbor changed");
+                    System.out.println("Parent has been changed");
                 }
             }
         } catch (IOException e) {
