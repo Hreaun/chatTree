@@ -10,28 +10,29 @@ import java.util.concurrent.ConcurrentMap;
 
 public class Node {
     private final long TIMEOUT = 100_000;
+    private final int BUF_SIZE = 1024;
     private final String name;
     private final DatagramSocket socket;
     private final List<InetSocketAddress> neighbors;
-    private final Map<InetSocketAddress, List<UUID>> sentMessages;
-    private final ConcurrentMap<InetSocketAddress, Long> lastMessageTime;
+    private final Map<InetSocketAddress, List<UUID>> sentMessages;      // хранит айди неподтвержденных сообщений соседа
+    private final ConcurrentMap<InetSocketAddress, Long> lastMessageTime; // хранит время последнего сообщения от соседа
     private final ConcurrentMap<UUID, String> messages;
     private final List<UUID> rcvdMessages;
     private int ackCounter = 0;
 
     public Node(String name, int port) throws SocketException {
-        this.name = name;
-        try {
-            this.socket = new DatagramSocket(port);
-        } catch (SocketException e) {
-            System.out.println(e.getMessage());
-            throw e;
-        }
+        this.name = name.substring(0, Math.min(name.length(), 30));
+        this.socket = new DatagramSocket(port);
+
         neighbors = Collections.synchronizedList(new ArrayList<>());
         sentMessages = Collections.synchronizedMap(new HashMap<>());
         lastMessageTime = new ConcurrentHashMap<>();
         rcvdMessages = new ArrayList<>();
         messages = new ConcurrentHashMap<>();
+    }
+
+    public int getBUF_SIZE() {
+        return BUF_SIZE;
     }
 
     public String getName() {
@@ -47,6 +48,10 @@ public class Node {
     }
 
     public List<InetSocketAddress> getNeighbors() {
+        List<InetSocketAddress> neighbors;
+        synchronized (this.neighbors) {
+            neighbors = this.neighbors;
+        }
         return neighbors;
     }
 
@@ -58,21 +63,49 @@ public class Node {
         return messages;
     }
 
-    public List<UUID> copyMessageIds(InetSocketAddress neighbor) {
-        List<UUID> copy;
+    public List<UUID> getMessageIds(InetSocketAddress neighbor) {
+        List<UUID> uuids;
         synchronized (sentMessages) {
-            copy = Collections.synchronizedList(new ArrayList<>(sentMessages.get(neighbor)));
+            uuids = sentMessages.get(neighbor);
         }
-        return copy;
+        return uuids;
     }
 
     public void connect(String ip, int port) throws IllegalArgumentException {
         neighbors.add(new InetSocketAddress(ip, port));
     }
 
+    public byte[] wrapSub(InetSocketAddress sub) {
+        byte[] buf = ByteBuffer.allocate(Byte.BYTES + sub.getAddress().toString().getBytes(StandardCharsets.UTF_8).length
+                + Integer.BYTES)
+                .put((byte) MessageType.SUB.getValue())
+                .putInt(sub.getPort())
+                .put(sub.getHostString().getBytes(StandardCharsets.UTF_8))
+                .array();
+        return buf;
+    }
+
+    public InetSocketAddress unwrapSub(DatagramPacket packet, byte[] buf) {
+        int port = ByteBuffer.wrap(Arrays.copyOfRange(buf, Byte.BYTES, Integer.BYTES + Byte.BYTES)).getInt();
+        String ip = new String(buf, Byte.BYTES + Integer.BYTES,
+                packet.getLength() - (Byte.BYTES + Integer.BYTES), StandardCharsets.UTF_8);
+
+        return new InetSocketAddress(ip, port);
+    }
+
+    public byte[] wrapAck(UUID messageId) {
+        byte[] buf = ByteBuffer.allocate(Byte.BYTES + messageId.toString().getBytes(StandardCharsets.UTF_8).length)
+                .put((byte) MessageType.ACK.getValue())
+                .put(messageId.toString().getBytes(StandardCharsets.UTF_8)).array();
+
+        return buf;
+    }
+
     public byte[] wrapMessage(UUID messageId, String message) {
-        byte[] buf = ByteBuffer.allocate(messageId.toString().getBytes(StandardCharsets.UTF_8).length + Integer.BYTES +
-                name.getBytes(StandardCharsets.UTF_8).length + message.getBytes(StandardCharsets.UTF_8).length)
+        byte[] buf = ByteBuffer.allocate(Byte.BYTES + messageId.toString().getBytes(StandardCharsets.UTF_8).length
+                + Integer.BYTES + name.getBytes(StandardCharsets.UTF_8).length
+                + message.getBytes(StandardCharsets.UTF_8).length)
+                .put((byte) MessageType.REGULAR.getValue())
                 .put(messageId.toString().getBytes(StandardCharsets.UTF_8))
                 .putInt(name.length())
                 .put(name.getBytes(StandardCharsets.UTF_8))
@@ -83,13 +116,14 @@ public class Node {
 
     public UUID unwrapMessage(DatagramPacket packet, byte[] buf) {
         byte[] UUIDbytes = UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8);
-        UUID messageId = UUID.fromString(new String(buf, 0, UUIDbytes.length, StandardCharsets.UTF_8));
-        int nameLength = ByteBuffer.wrap(Arrays.copyOfRange(buf, UUIDbytes.length,
-                UUIDbytes.length + Integer.BYTES)).getInt();
-        String name = new String(buf, UUIDbytes.length + Integer.BYTES, nameLength, StandardCharsets.UTF_8);
-        String message = new String(buf, UUIDbytes.length + Integer.BYTES + nameLength,
-                packet.getLength() - (UUIDbytes.length + Integer.BYTES + nameLength), StandardCharsets.UTF_8);
+        UUID messageId = UUID.fromString(new String(buf, Byte.BYTES, UUIDbytes.length, StandardCharsets.UTF_8));
+        int nameLength = ByteBuffer.wrap(Arrays.copyOfRange(buf, Byte.BYTES + UUIDbytes.length,
+                Byte.BYTES + UUIDbytes.length + Integer.BYTES)).getInt();
+        String name = new String(buf, Byte.BYTES + UUIDbytes.length + Integer.BYTES, nameLength, StandardCharsets.UTF_8);
+        String message = new String(buf, Byte.BYTES + UUIDbytes.length + Integer.BYTES + nameLength,
+                packet.getLength() - (Byte.BYTES + UUIDbytes.length + Integer.BYTES + nameLength), StandardCharsets.UTF_8);
 
+        // проверка повторного принятия сообщения в случае потери пакета с подтверждением у отправителя
         if (!rcvdMessages.contains(messageId)) {
             rcvdMessages.add(messageId);
             System.out.println("From " + name + ": " + message);
@@ -121,6 +155,19 @@ public class Node {
         }
     }
 
+    public void updateNeighbors(InetSocketAddress oldParent, DatagramPacket packet, byte[] buf) {
+        InetSocketAddress newParent = unwrapSub(packet, buf);
+        addNeighbor(newParent);
+
+        synchronized (neighbors) {
+            neighbors.remove(oldParent);
+        }
+        synchronized (sentMessages) {
+            sentMessages.remove(oldParent);
+        }
+        lastMessageTime.remove(oldParent);
+    }
+
     public void updateTime(InetSocketAddress neighbor) {
         lastMessageTime.put(neighbor, System.currentTimeMillis());
     }
@@ -148,12 +195,13 @@ public class Node {
             Map.Entry<UUID, String> msgEntry = messagesIter.next();
             synchronized (sentMessages) {
                 for (Map.Entry<InetSocketAddress, List<UUID>> sentMsgEntry : sentMessages.entrySet()) {
-                    synchronized (this.copyMessageIds(sentMsgEntry.getKey())) {
+                    synchronized (this.getMessageIds(sentMsgEntry.getKey())) {
                         if (sentMsgEntry.getValue().contains(msgEntry.getKey())) {
                             counter++;
                         }
                     }
                 }
+                // удаление подтвержденного всеми соседями сообщения
                 if (counter == 0) {
                     messagesIter.remove();
                 }
@@ -165,8 +213,8 @@ public class Node {
         synchronized (neighbors) {
             synchronized (sentMessages) {
                 if (sentMessages.get(neighbor)
-                        .remove(UUID.fromString(new String
-                                (packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8)))) {
+                        .remove(UUID.fromString(new String(packet.getData(), Byte.BYTES,
+                                packet.getLength() - Byte.BYTES, StandardCharsets.UTF_8)))) {
                     ackCounter++;
                 }
                 if (ackCounter >= neighbors.size()) {

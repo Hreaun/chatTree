@@ -17,8 +17,8 @@ public class Main {
         } catch (NumberFormatException e) {
             System.out.println("Enter name, loss percentage and port for the node.");
             return;
-
         } catch (SocketException e) {
+            System.out.println(e.getMessage());
             return;
         }
 
@@ -28,7 +28,7 @@ public class Main {
                 int parentPort = Integer.parseInt(args[4]);
                 node.connect(parentIp, parentPort);
             } catch (IllegalArgumentException e) {
-                System.out.println("Enter correct parent's port");
+                System.out.println("Enter correct parent's port.");
                 return;
             }
         }
