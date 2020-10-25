@@ -5,13 +5,15 @@ import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class Node {
     private final String name;
     private final DatagramSocket socket;
     private final List<InetSocketAddress> neighbors;
     private final Map<InetSocketAddress, List<UUID>> sentMessages;
-    private final Map<UUID, String> messages;
+    private final ConcurrentMap<UUID, String> messages;
     private final List<UUID> rcvdMessages;
     private int ackCounter = 0;
 
@@ -26,7 +28,7 @@ public class Node {
         neighbors = Collections.synchronizedList(new ArrayList<>());
         sentMessages = Collections.synchronizedMap(new HashMap<>());
         rcvdMessages = new ArrayList<>();
-        messages = Collections.synchronizedMap(new HashMap<>());
+        messages = new ConcurrentHashMap<>();
     }
 
     public Map<InetSocketAddress, List<UUID>> getSentMessages() {
@@ -43,6 +45,10 @@ public class Node {
 
     public DatagramSocket getSocket() {
         return socket;
+    }
+
+    public Map<UUID, String> getMessages() {
+        return messages;
     }
 
     public String getMessage(UUID messageId) {
@@ -107,9 +113,9 @@ public class Node {
     }
 
     public void putMessage(UUID messageId, String message) {
-        synchronized (messages) {
-            messages.put(messageId, message);
-        }
+        messages.put(messageId, message);
+        System.out.println("put " + messages.get(messageId) + " " + messageId);
+
     }
 
     public void addNeighbor(InetSocketAddress neighbor) {
@@ -121,17 +127,17 @@ public class Node {
     }
 
     void checkMessages() {
-        synchronized (messages) {
-            Iterator<Map.Entry<UUID, String>> messagesIter = messages.entrySet().iterator();
-            Iterator<Map.Entry<InetSocketAddress, List<UUID>>> sentMsgIter = sentMessages.entrySet().iterator();
-            while (messagesIter.hasNext()) {
-                int counter = 0;
-                Map.Entry<UUID, String> msgEntry = messagesIter.next();
-                while (sentMsgIter.hasNext()) {
-                    Map.Entry<InetSocketAddress, List<UUID>> sentMsgEntry = sentMsgIter.next();
-                    if (sentMsgEntry.getValue().contains(msgEntry.getKey())) {
-                        System.out.println("cnt " + msgEntry.getValue());
-                        counter++;
+        Iterator<Map.Entry<UUID, String>> messagesIter = messages.entrySet().iterator();
+        while (messagesIter.hasNext()) {
+            int counter = 0;
+            Map.Entry<UUID, String> msgEntry = messagesIter.next();
+            synchronized (sentMessages) {
+                for (Map.Entry<InetSocketAddress, List<UUID>> sentMsgEntry : sentMessages.entrySet()) {
+                    synchronized (this.copyMessageIds(sentMsgEntry.getKey())) {
+                        if (sentMsgEntry.getValue().contains(msgEntry.getKey())) {
+                            System.out.println("cnt " + msgEntry.getValue());
+                            counter++;
+                        }
                     }
                 }
                 if (counter == 0) {
@@ -145,10 +151,12 @@ public class Node {
     public void ackMessage(InetSocketAddress neighbor, DatagramPacket packet) {
         synchronized (neighbors) {
             synchronized (sentMessages) {
-                sentMessages.get(neighbor)
-                        .remove(UUID.fromString(new String(packet.getData(), 0, packet.getLength(),
-                                StandardCharsets.UTF_8)));
-                if (++ackCounter >= neighbors.size()) {
+                if (sentMessages.get(neighbor)
+                        .remove(UUID.fromString(new String
+                                (packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8)))) {
+                    ackCounter++;
+                }
+                if (ackCounter >= neighbors.size()) {
                     checkMessages();
                     ackCounter = 0;
                 }

@@ -34,14 +34,14 @@ public class Receiver extends Thread {
 
     void resendMessages() { // npe
         Map<InetSocketAddress, List<UUID>> sentMessages = node.getSentMessages();
+        Map<UUID, String> messages = node.getMessages();
         synchronized (node.getSentMessages()) {
             for (Map.Entry<InetSocketAddress, List<UUID>> sentMsgEntry : sentMessages.entrySet()) {
-                // ArrayList<UUID> ids = node.copyMessageIds(sentMsgEntry.getKey());
                 synchronized (node.copyMessageIds(sentMsgEntry.getKey())) {
-                    Iterator<UUID> idIter = sentMsgEntry.getValue().iterator();
-                    while (idIter.hasNext()) {
-                        UUID msgId = idIter.next();
-                        byte[] buf = node.wrapMessage(msgId, node.getMessage(msgId));
+                    for (UUID msgId : sentMsgEntry.getValue()) {
+                        String msg = messages.get(msgId);
+                        System.out.println("resent " + msg + " " + msgId);
+                        byte[] buf = node.wrapMessage(msgId, msg);
                         try {
                             socket.send(new DatagramPacket(buf, buf.length,
                                     sentMsgEntry.getKey().getAddress(), sentMsgEntry.getKey().getPort()));
