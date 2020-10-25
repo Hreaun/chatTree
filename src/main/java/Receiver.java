@@ -43,7 +43,6 @@ public class Receiver extends Thread {
                 synchronized (node.copyMessageIds(sentMsgEntry.getKey())) {
                     for (UUID msgId : sentMsgEntry.getValue()) {
                         String msg = messages.get(msgId);
-                        System.out.println("resent " + msg + " " + msgId);
                         byte[] buf = node.wrapMessage(msgId, msg);
                         try {
                             socket.send(new DatagramPacket(buf, buf.length,
@@ -78,6 +77,8 @@ public class Receiver extends Thread {
             }
 
             node.addNeighbor((InetSocketAddress) packet.getSocketAddress());
+            node.updateTime((InetSocketAddress) packet.getSocketAddress());
+            node.checkTimes();
 
             byte[] UUIDbytes = UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8);
             if (packet.getLength() > UUIDbytes.length) {

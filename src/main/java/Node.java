@@ -9,10 +9,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 public class Node {
+    private final long TIMEOUT = 100_000;
     private final String name;
     private final DatagramSocket socket;
     private final List<InetSocketAddress> neighbors;
     private final Map<InetSocketAddress, List<UUID>> sentMessages;
+    private final ConcurrentMap<InetSocketAddress, Long> lastMessageTime;
     private final ConcurrentMap<UUID, String> messages;
     private final List<UUID> rcvdMessages;
     private int ackCounter = 0;
@@ -27,6 +29,7 @@ public class Node {
         }
         neighbors = Collections.synchronizedList(new ArrayList<>());
         sentMessages = Collections.synchronizedMap(new HashMap<>());
+        lastMessageTime = new ConcurrentHashMap<>();
         rcvdMessages = new ArrayList<>();
         messages = new ConcurrentHashMap<>();
     }
@@ -108,14 +111,32 @@ public class Node {
 
     public void putMessage(UUID messageId, String message) {
         messages.put(messageId, message);
-        System.out.println("put " + messages.get(messageId) + " " + messageId);
-
     }
 
     public void addNeighbor(InetSocketAddress neighbor) {
         synchronized (neighbors) {
             if (!neighbors.contains(neighbor)) {
                 neighbors.add(neighbor);
+            }
+        }
+    }
+
+    public void updateTime(InetSocketAddress neighbor) {
+        lastMessageTime.put(neighbor, System.currentTimeMillis());
+    }
+
+    void checkTimes() {
+        Iterator<Map.Entry<InetSocketAddress, Long>> timesIter = lastMessageTime.entrySet().iterator();
+        while (timesIter.hasNext()) {
+            Map.Entry<InetSocketAddress, Long> timeEntry = timesIter.next();
+            if (System.currentTimeMillis() - timeEntry.getValue() > TIMEOUT) {
+                synchronized (neighbors) {
+                    neighbors.remove(timeEntry.getKey());
+                }
+                synchronized (sentMessages) {
+                    sentMessages.remove(timeEntry.getKey());
+                }
+                timesIter.remove();
             }
         }
     }
@@ -129,13 +150,11 @@ public class Node {
                 for (Map.Entry<InetSocketAddress, List<UUID>> sentMsgEntry : sentMessages.entrySet()) {
                     synchronized (this.copyMessageIds(sentMsgEntry.getKey())) {
                         if (sentMsgEntry.getValue().contains(msgEntry.getKey())) {
-                            System.out.println("cnt " + msgEntry.getValue());
                             counter++;
                         }
                     }
                 }
                 if (counter == 0) {
-                    System.out.println("rmv " + msgEntry.getValue() + "  " + sentMessages.size());
                     messagesIter.remove();
                 }
             }
