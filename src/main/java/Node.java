@@ -75,6 +75,7 @@ public class Node {
         neighbors.add(new InetSocketAddress(ip, port));
     }
 
+    // обертка заместителя в байты
     public byte[] wrapSub(InetSocketAddress sub) {
         byte[] buf = ByteBuffer.allocate(Byte.BYTES + sub.getAddress().toString().getBytes(StandardCharsets.UTF_8).length
                 + Integer.BYTES)
@@ -93,6 +94,7 @@ public class Node {
         return new InetSocketAddress(ip, port);
     }
 
+    // обертка подтверждения в байты
     public byte[] wrapAck(UUID messageId) {
         byte[] buf = ByteBuffer.allocate(Byte.BYTES + messageId.toString().getBytes(StandardCharsets.UTF_8).length)
                 .put((byte) MessageType.ACK.getValue())
@@ -101,6 +103,7 @@ public class Node {
         return buf;
     }
 
+    // обертка обычного сообщения в байты
     public byte[] wrapMessage(UUID messageId, String message) {
         byte[] buf = ByteBuffer.allocate(Byte.BYTES + messageId.toString().getBytes(StandardCharsets.UTF_8).length
                 + Integer.BYTES + name.getBytes(StandardCharsets.UTF_8).length
@@ -155,6 +158,7 @@ public class Node {
         }
     }
 
+    // смена родителя
     public void updateNeighbors(InetSocketAddress oldParent, DatagramPacket packet, byte[] buf) {
         InetSocketAddress newParent = unwrapSub(packet, buf);
         addNeighbor(newParent);
@@ -209,6 +213,7 @@ public class Node {
         }
     }
 
+    // подтверждение получения сообщения соседом
     public void ackMessage(InetSocketAddress neighbor, DatagramPacket packet) {
         synchronized (neighbors) {
             synchronized (sentMessages) {
