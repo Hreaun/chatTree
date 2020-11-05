@@ -51,7 +51,7 @@ public class Receiver extends Thread {
         Random random = new Random();
         byte[] buf = new byte[BUF_SIZE];
         try {
-            while (!isInterrupted()) {
+            while (true) {
                 resendMessages();
                 DatagramPacket packet = new DatagramPacket(buf, buf.length);
                 try {
@@ -88,7 +88,12 @@ public class Receiver extends Thread {
                 }
             }
         } catch (IOException e) {
-            System.out.println(e.getMessage());
+            if (socket.isClosed()) {
+                System.out.println("Connection was successfully closed.");
+            } else {
+                System.out.println(e.getMessage());
+                socket.close();
+            }
         }
     }
 }

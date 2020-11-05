@@ -36,7 +36,6 @@ public class Main {
         receiver.start();
         sender.start();
 
-        receiver.interrupt();
         try {
             receiver.join();
         } catch (InterruptedException e) {
